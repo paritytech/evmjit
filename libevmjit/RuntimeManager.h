@@ -18,6 +18,8 @@ public:
 	RuntimeManager(llvm::IRBuilder<>& _builder);
 
 	llvm::Value* getRuntimePtr();
+	llvm::Value* getDataPtr();
+	llvm::Value* getEnv();
 
 	llvm::Value* get(RuntimeData::Index _index);
 	llvm::Value* get(Instruction _inst);
@@ -30,6 +32,7 @@ public:
 
 	void raiseException(ReturnCode _returnCode);
 
+	static llvm::StructType* getRuntimeType();
 	static llvm::StructType* getRuntimeDataType();
 
 private:
@@ -37,8 +40,10 @@ private:
 	void set(RuntimeData::Index _index, llvm::Value* _value);
 	llvm::Value* getJmpBuf();
 
+	llvm::GlobalVariable* m_rtPtr = nullptr;
 	llvm::GlobalVariable* m_dataPtr = nullptr;
 	llvm::Function* m_longjmp = nullptr;
+	llvm::Value* m_env = nullptr;
 };
 
 }

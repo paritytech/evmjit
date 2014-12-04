@@ -10,14 +10,15 @@ namespace eth
 {
 namespace jit
 {
+	class Memory;
 
 class Ext : public RuntimeHelper
 {
 public:
-	Ext(RuntimeManager& _runtimeManager);
+	Ext(RuntimeManager& _runtimeManager, Memory& _memoryMan);
 
-	llvm::Value* store(llvm::Value* _index);
-	void setStore(llvm::Value* _index, llvm::Value* _value);
+	llvm::Value* sload(llvm::Value* _index);
+	void sstore(llvm::Value* _index, llvm::Value* _value);
 
 	llvm::Value* balance(llvm::Value* _address);
 	void suicide(llvm::Value* _address);
@@ -32,6 +33,7 @@ public:
 	void log(llvm::Value* _memIdx, llvm::Value* _numBytes, size_t _numTopics, std::array<llvm::Value*,4> const& _topics);
 
 private:
+	Memory& m_memoryMan;
 
 	llvm::Value* m_args[2];
 	llvm::Value* m_arg2;
@@ -41,9 +43,9 @@ private:
 	llvm::Value* m_arg6;
 	llvm::Value* m_arg7;
 	llvm::Value* m_arg8;
-	llvm::Value* m_data;
-	llvm::Function* m_store;
-	llvm::Function* m_setStore;
+	llvm::Value* m_data = nullptr;
+	llvm::Function* m_sload;
+	llvm::Function* m_sstore;
 	llvm::Function* m_calldataload;
 	llvm::Function* m_balance;
 	llvm::Function* m_suicide;

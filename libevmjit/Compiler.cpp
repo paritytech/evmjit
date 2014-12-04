@@ -2,6 +2,7 @@
 #include "Compiler.h"
 
 #include <fstream>
+#include <chrono>
 
 #include <boost/dynamic_bitset.hpp>
 
@@ -152,6 +153,7 @@ void Compiler::createBasicBlocks(bytes const& _bytecode)
 
 std::unique_ptr<llvm::Module> Compiler::compile(bytes const& _bytecode)
 {
+	auto compilationStartTime = std::chrono::high_resolution_clock::now();
 	auto module = std::unique_ptr<llvm::Module>(new llvm::Module("main", m_builder.getContext()));
 
 	// Create main function
@@ -170,7 +172,7 @@ std::unique_ptr<llvm::Module> Compiler::compile(bytes const& _bytecode)
 	RuntimeManager runtimeManager(m_builder);
 	GasMeter gasMeter(m_builder, runtimeManager);
 	Memory memory(runtimeManager, gasMeter);
-	Ext ext(runtimeManager);
+	Ext ext(runtimeManager, memory);
 	Stack stack(m_builder, runtimeManager);
 	Arith256 arith(m_builder);
 
@@ -242,6 +244,8 @@ std::unique_ptr<llvm::Module> Compiler::compile(bytes const& _bytecode)
 		fpManager.run(*m_mainFunc);
 	}
 
+	auto compilationEndTime = std::chrono::high_resolution_clock::now();
+	clog(JIT) << "JIT: " << std::chrono::duration_cast<std::chrono::milliseconds>(compilationEndTime - compilationStartTime).count();
 	return module;
 }
 
@@ -573,7 +577,7 @@ void Compiler::compileBasicBlock(BasicBlock& _basicBlock, bytes const& _bytecode
 		case Instruction::SLOAD:
 		{
 			auto index = stack.pop();
-			auto value = _ext.store(index);
+			auto value = _ext.sload(index);
 			stack.push(value);
 			break;
 		}
@@ -583,7 +587,7 @@ void Compiler::compileBasicBlock(BasicBlock& _basicBlock, bytes const& _bytecode
 			auto index = stack.pop();
 			auto value = stack.pop();
 			_gasMeter.countSStore(_ext, index, value);
-			_ext.setStore(index, value);
+			_ext.sstore(index, value);
 			break;
 		}
 
