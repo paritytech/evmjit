@@ -1,9 +1,8 @@
 
 #include "JitVM.h"
-#include <libevm/VMFace.h>
 #include <libevm/VM.h>
 #include <evmjit/libevmjit/ExecutionEngine.h>
-#include <evmjit/libevmjit/Compiler.h>
+#include <evmjit/libevmjit/Utils.h>
 
 namespace dev
 {
@@ -14,35 +13,29 @@ bytesConstRef JitVM::go(ExtVMFace& _ext, OnOpFunc const&, uint64_t)
 {
 	using namespace jit;
 
-	Compiler::Options defaultOptions;
-	auto module = Compiler(defaultOptions).compile(_ext.code);
-
-	RuntimeData data = {};
-
-#define set(INDEX, VALUE) data.elems[INDEX] = eth2llvm(VALUE)
-	set(RuntimeData::Gas, m_gas);
-	set(RuntimeData::Address, fromAddress(_ext.myAddress));
-	set(RuntimeData::Caller, fromAddress(_ext.caller));
-	set(RuntimeData::Origin, fromAddress(_ext.origin));
-	set(RuntimeData::CallValue, _ext.value);
-	set(RuntimeData::CallDataSize, _ext.data.size());
-	set(RuntimeData::GasPrice, _ext.gasPrice);
-	set(RuntimeData::PrevHash, _ext.previousBlock.hash);
-	set(RuntimeData::CoinBase, fromAddress(_ext.currentBlock.coinbaseAddress));
-	set(RuntimeData::TimeStamp, _ext.currentBlock.timestamp);
-	set(RuntimeData::Number, _ext.currentBlock.number);
-	set(RuntimeData::Difficulty, _ext.currentBlock.difficulty);
-	set(RuntimeData::GasLimit, _ext.currentBlock.gasLimit);
-	set(RuntimeData::CodeSize, _ext.code.size());   // TODO: Use constant
+	RuntimeData data;
+	data.set(RuntimeData::Gas, m_gas);
+	data.set(RuntimeData::Address, fromAddress(_ext.myAddress));
+	data.set(RuntimeData::Caller, fromAddress(_ext.caller));
+	data.set(RuntimeData::Origin, fromAddress(_ext.origin));
+	data.set(RuntimeData::CallValue, _ext.value);
+	data.set(RuntimeData::CallDataSize, _ext.data.size());
+	data.set(RuntimeData::GasPrice, _ext.gasPrice);
+	data.set(RuntimeData::PrevHash, _ext.previousBlock.hash);
+	data.set(RuntimeData::CoinBase, fromAddress(_ext.currentBlock.coinbaseAddress));
+	data.set(RuntimeData::TimeStamp, _ext.currentBlock.timestamp);
+	data.set(RuntimeData::Number, _ext.currentBlock.number);
+	data.set(RuntimeData::Difficulty, _ext.currentBlock.difficulty);
+	data.set(RuntimeData::GasLimit, _ext.currentBlock.gasLimit);
+	data.set(RuntimeData::CodeSize, _ext.code.size());
 	data.callData = _ext.data.data();
 	data.code = _ext.code.data();
-#undef set
 
 	ExecutionEngine engine;
 	auto env = reinterpret_cast<Env*>(&_ext);
-	auto exitCode = engine.run(std::move(module), &data, env);
+	auto exitCode = engine.run(_ext.code, &data, env);
 
-	switch (static_cast<ReturnCode>(exitCode))
+	switch (exitCode)
 	{
 	case ReturnCode::BadJumpDestination:
 		BOOST_THROW_EXCEPTION(BadJumpDestination());
@@ -66,7 +59,11 @@ bytesConstRef JitVM::go(ExtVMFace& _ext, OnOpFunc const&, uint64_t)
 
 namespace
 {
-	// MSVS linker ignores export symbols in Env.cpp if nothing point at least one of them
+	// MSVS linker ignores export symbols in Env.cpp if nothing points at least one of them
 	extern "C" void env_sload();
-	void linkerWorkaround() { env_sload(); }
+	void linkerWorkaround() 
+	{ 
+		env_sload();
+		(void)&linkerWorkaround; // suppress unused function warning from GCC
+	}
 }
