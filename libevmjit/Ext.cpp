@@ -38,6 +38,7 @@ Ext::Ext(RuntimeManager& _runtimeManager, Memory& _memoryMan):
 	m_arg6 = m_builder.CreateAlloca(i256Ty, nullptr, "ext.arg6");
 	m_arg7 = m_builder.CreateAlloca(i256Ty, nullptr, "ext.arg7");
 	m_arg8 = m_builder.CreateAlloca(i256Ty, nullptr, "ext.arg8");
+	m_size = m_builder.CreateAlloca(Type::Size, nullptr, "env.size");
 
 	using Linkage = llvm::GlobalValue::LinkageTypes;
 
@@ -48,19 +49,21 @@ Ext::Ext(RuntimeManager& _runtimeManager, Memory& _memoryMan):
 	m_calldataload = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 3}, false), Linkage::ExternalLinkage, "ext_calldataload", module);
 	m_balance = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 3}, false), Linkage::ExternalLinkage, "ext_balance", module);
 	m_suicide = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 2}, false), Linkage::ExternalLinkage, "ext_suicide", module);
-	m_create = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 5}, false), Linkage::ExternalLinkage, "ext_create", module);
-	m_call = llvm::Function::Create(llvm::FunctionType::get(Type::Void, argsTypes, false), Linkage::ExternalLinkage, "ext_call", module);
-	m_exp = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 4}, false), Linkage::ExternalLinkage, "ext_exp", module);
-	m_codeAt = llvm::Function::Create(llvm::FunctionType::get(Type::BytePtr, {argsTypes, 2}, false), Linkage::ExternalLinkage, "ext_codeAt", module);
-	m_codesizeAt = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 3}, false), Linkage::ExternalLinkage, "ext_codesizeAt", module);
-	m_log0 = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 3}, false), Linkage::ExternalLinkage, "ext_log0", module);
-	m_log1 = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 4}, false), Linkage::ExternalLinkage, "ext_log1", module);
-	m_log2 = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 5}, false), Linkage::ExternalLinkage, "ext_log2", module);
-	m_log3 = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 6}, false), Linkage::ExternalLinkage, "ext_log3", module);
-	m_log4 = llvm::Function::Create(llvm::FunctionType::get(Type::Void, {argsTypes, 7}, false), Linkage::ExternalLinkage, "ext_log4", module);
 
 	llvm::Type* sha3ArgsTypes[] = {Type::BytePtr, Type::Size, Type::WordPtr};
 	m_sha3 = llvm::Function::Create(llvm::FunctionType::get(Type::Void, sha3ArgsTypes, false), Linkage::ExternalLinkage, "env_sha3", module);
+
+	llvm::Type* createArgsTypes[] = {Type::EnvPtr, Type::WordPtr, Type::BytePtr, Type::Size, Type::WordPtr};
+	m_create = llvm::Function::Create(llvm::FunctionType::get(Type::Void, createArgsTypes, false), Linkage::ExternalLinkage, "env_create", module);
+
+	llvm::Type* callArgsTypes[] = {Type::EnvPtr, Type::WordPtr, Type::WordPtr, Type::WordPtr, Type::BytePtr, Type::Size, Type::BytePtr, Type::Size, Type::WordPtr};
+	m_call = llvm::Function::Create(llvm::FunctionType::get(Type::Bool, callArgsTypes, false), Linkage::ExternalLinkage, "env_call", module);
+
+	llvm::Type* logArgsTypes[] = {Type::EnvPtr, Type::BytePtr, Type::Size, Type::WordPtr, Type::WordPtr, Type::WordPtr, Type::WordPtr};
+	m_log = llvm::Function::Create(llvm::FunctionType::get(Type::Void, logArgsTypes, false), Linkage::ExternalLinkage, "env_log", module);
+
+	llvm::Type* getExtCodeArgsTypes[] = {Type::EnvPtr, Type::WordPtr, Type::Size->getPointerTo()};
+	m_getExtCode = llvm::Function::Create(llvm::FunctionType::get(Type::BytePtr, getExtCodeArgsTypes, false), Linkage::ExternalLinkage, "env_getExtCode", module);
 }
 
 llvm::Value* Ext::sload(llvm::Value* _index)
@@ -103,9 +106,9 @@ void Ext::suicide(llvm::Value* _address)
 llvm::Value* Ext::create(llvm::Value* _endowment, llvm::Value* _initOff, llvm::Value* _initSize)
 {
 	m_builder.CreateStore(_endowment, m_args[0]);
-	m_builder.CreateStore(_initOff, m_arg2);
-	m_builder.CreateStore(_initSize, m_arg3);
-	createCall(m_create, getRuntimeManager().getRuntimePtr(), m_args[0], m_arg2, m_arg3, m_args[1]);
+	auto begin = m_memoryMan.getBytePtr(_initOff);
+	auto size = m_builder.CreateTrunc(_initSize, Type::Size, "size");
+	createCall(m_create, getRuntimeManager().getEnv(), m_args[0], begin, size, m_args[1]);
 	llvm::Value* address = m_builder.CreateLoad(m_args[1]);
 	address = Endianness::toNative(m_builder, address);
 	return address;
@@ -117,15 +120,15 @@ llvm::Value* Ext::call(llvm::Value*& _gas, llvm::Value* _receiveAddress, llvm::V
 	auto receiveAddress = Endianness::toBE(m_builder, _receiveAddress);
 	m_builder.CreateStore(receiveAddress, m_arg2);
 	m_builder.CreateStore(_value, m_arg3);
-	m_builder.CreateStore(_inOff, m_arg4);
-	m_builder.CreateStore(_inSize, m_arg5);
-	m_builder.CreateStore(_outOff, m_arg6);
-	m_builder.CreateStore(_outSize, m_arg7);
+	auto inBeg = m_memoryMan.getBytePtr(_inOff);
+	auto inSize = m_builder.CreateTrunc(_inSize, Type::Size, "in.size");
+	auto outBeg = m_memoryMan.getBytePtr(_outOff);
+	auto outSize = m_builder.CreateTrunc(_outSize, Type::Size, "out.size");
 	auto codeAddress = Endianness::toBE(m_builder, _codeAddress);
 	m_builder.CreateStore(codeAddress, m_arg8);
-	createCall(m_call, getRuntimeManager().getEnv(), m_args[0], m_arg2, m_arg3, m_arg4, m_arg5, m_arg6, m_arg7, m_arg8, m_args[1]);
+	auto ret = createCall(m_call, getRuntimeManager().getEnv(), m_args[0], m_arg2, m_arg3, inBeg, inSize, outBeg, outSize, m_arg8);
 	_gas = m_builder.CreateLoad(m_args[0]); // Return gas
-	return m_builder.CreateLoad(m_args[1]);
+	return m_builder.CreateZExt(ret, Type::Word, "ret");
 }
 
 llvm::Value* Ext::sha3(llvm::Value* _inOff, llvm::Value* _inSize)
@@ -138,34 +141,33 @@ llvm::Value* Ext::sha3(llvm::Value* _inOff, llvm::Value* _inSize)
 	return hash;
 }
 
-llvm::Value* Ext::codeAt(llvm::Value* _addr)
+MemoryRef Ext::getExtCode(llvm::Value* _addr)
 {
 	auto addr = Endianness::toBE(m_builder, _addr);
 	m_builder.CreateStore(addr, m_args[0]);
-	return m_builder.CreateCall2(m_codeAt, getRuntimeManager().getEnv(), m_args[0]);
+	auto code = createCall(m_getExtCode, getRuntimeManager().getEnv(), m_args[0], m_size);
+	auto codeSize = m_builder.CreateLoad(m_size);
+	auto codeSize256 = m_builder.CreateZExt(codeSize, Type::Word);
+	return {code, codeSize256};
 }
 
-llvm::Value* Ext::codesizeAt(llvm::Value* _addr)
+void Ext::log(llvm::Value* _memIdx, llvm::Value* _numBytes, std::array<llvm::Value*,4> const& _topics)
 {
-	auto addr = Endianness::toBE(m_builder, _addr);
-	m_builder.CreateStore(addr, m_args[0]);
-	createCall(m_codesizeAt, getRuntimeManager().getEnv(), m_args[0], m_args[1]);
-	return m_builder.CreateLoad(m_args[1]);
-}
+	auto begin = m_memoryMan.getBytePtr(_memIdx);
+	auto size = m_builder.CreateTrunc(_numBytes, Type::Size, "size");
+	llvm::Value* args[] = {getRuntimeManager().getEnv(), begin, size, m_arg2, m_arg3, m_arg4, m_arg5};
 
-void Ext::log(llvm::Value* _memIdx, llvm::Value* _numBytes, size_t _numTopics, std::array<llvm::Value*,4> const& _topics)
-{
-	llvm::Value* args[] = {nullptr, m_args[0], m_args[1], m_arg2, m_arg3, m_arg4, m_arg5};
-	llvm::Value* funcs[] = {m_log0, m_log1, m_log2, m_log3, m_log4};
+	auto topicArgPtr = &args[3];
+	for (auto&& topic : _topics)
+	{
+		if (topic)
+			m_builder.CreateStore(Endianness::toBE(m_builder, topic), *topicArgPtr);
+		else
+			*topicArgPtr = llvm::ConstantPointerNull::get(Type::WordPtr);
+		++topicArgPtr;
+	}
 
-	args[0] = getRuntimeManager().getEnv();
-	m_builder.CreateStore(_memIdx, m_args[0]);
-	m_builder.CreateStore(_numBytes, m_args[1]);
-
-	for (size_t i = 0; i < _numTopics; ++i)
-		m_builder.CreateStore(_topics[i], args[i + 3]);
-
-	m_builder.CreateCall(funcs[_numTopics], llvm::ArrayRef<llvm::Value*>(args, _numTopics + 3));
+	m_builder.CreateCall(m_log, args);
 }
 
 }
