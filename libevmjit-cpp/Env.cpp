@@ -49,6 +49,8 @@ extern "C"
 
 	EXPORT void env_create(ExtVMFace* _env, i256* _endowment, byte* _initBeg, uint64_t _initSize, h256* o_address)
 	{
+		assert(_env->depth < 1024);	// TODO: Handle call depth
+
 		auto endowment = llvm2eth(*_endowment);
 
 		if (_env->balance(_env->myAddress) >= endowment)
@@ -56,7 +58,7 @@ extern "C"
 			_env->subBalance(endowment);
 			u256 gas;   // TODO: Handle gas
 			OnOpFunc onOp {}; // TODO: Handle that thing
-			h256 address(_env->create(endowment, &gas, {_initBeg, _initSize}, onOp), h256::AlignRight);
+			h256 address(_env->create(endowment, gas, {_initBeg, _initSize}, onOp), h256::AlignRight);
 			*o_address = address;
 		}
 		else
@@ -65,6 +67,8 @@ extern "C"
 
 	EXPORT bool env_call(ExtVMFace* _env, i256* io_gas, h256* _receiveAddress, i256* _value, byte* _inBeg, uint64_t _inSize, byte* _outBeg, uint64_t _outSize, h256* _codeAddress)
 	{
+		assert(_env->depth < 1024);	// TODO: Handle call depth
+
 		auto value = llvm2eth(*_value);
 		if (_env->balance(_env->myAddress) >= value)
 		{
@@ -75,7 +79,7 @@ extern "C"
 			OnOpFunc onOp {}; // TODO: Handle that thing
 			auto codeAddress = right160(*_codeAddress);
 			auto gas = llvm2eth(*io_gas);
-			auto ret = _env->call(receiveAddress, value, inRef, &gas, outRef, onOp, {}, codeAddress);
+			auto ret = _env->call(receiveAddress, value, inRef, gas, outRef, onOp, {}, codeAddress);
 			*io_gas = eth2llvm(gas);
 			return ret;
 		}
