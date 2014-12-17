@@ -24,7 +24,8 @@ namespace jit
 {
 
 Memory::Memory(RuntimeManager& _runtimeManager, GasMeter& _gasMeter):
-	RuntimeHelper(_runtimeManager)
+	RuntimeHelper(_runtimeManager),
+	m_gasMeter(_gasMeter)
 {
 	auto module = getModule();
 	llvm::Type* argTypes[] = {Type::Word, Type::Word};
@@ -59,11 +60,17 @@ llvm::Function* Memory::createRequireFunc(GasMeter& _gasMeter, RuntimeManager& _
 	auto size = offset->getNextNode();
 	size->setName("size");
 
+	auto preBB = llvm::BasicBlock::Create(func->getContext(), "Pre", func);
 	auto checkBB = llvm::BasicBlock::Create(func->getContext(), "Check", func);
 	auto resizeBB = llvm::BasicBlock::Create(func->getContext(), "Resize", func);
 	auto returnBB = llvm::BasicBlock::Create(func->getContext(), "Return", func);
 
 	InsertPointGuard guard(m_builder); // Restores insert point at function exit
+
+	// BB "Pre": Ignore checks with size 0
+	m_builder.SetInsertPoint(preBB);
+	auto sizeIsZero = m_builder.CreateICmpEQ(size, Constant::get(0));
+	m_builder.CreateCondBr(sizeIsZero, returnBB, checkBB);
 
 	// BB "Check"
 	m_builder.SetInsertPoint(checkBB);
@@ -88,7 +95,7 @@ llvm::Function* Memory::createRequireFunc(GasMeter& _gasMeter, RuntimeManager& _
 	sizeRequired = m_builder.CreateMul(wordsRequired, Constant::get(32), "roundedSizeReq");
 	auto words = m_builder.CreateUDiv(currSize, Constant::get(32), "words");	// size is always 32*k
 	auto newWords = m_builder.CreateSub(wordsRequired, words, "addtionalWords");
-	_gasMeter.checkMemory(newWords);
+	_gasMeter.countMemory(newWords);
 	// Resize
 	m_builder.CreateStore(sizeRequired, m_size);
 	auto newData = m_builder.CreateCall2(m_resize, _runtimeManager.getRuntimePtr(), m_size, "newData");
@@ -185,6 +192,11 @@ void Memory::copyBytes(llvm::Value* _srcPtr, llvm::Value* _srcSize, llvm::Value*
 	auto zero256 = llvm::ConstantInt::get(Type::Word, 0);
 
 	require(_destMemIdx, _reqBytes);
+
+	// Additional copy cost
+	// TODO: This round ups to 32 happens in many places
+	auto copyWords = m_builder.CreateUDiv(m_builder.CreateAdd(_reqBytes, Constant::get(31)), Constant::get(32));
+	m_gasMeter.countCopy(copyWords);
 
 	auto srcPtr = m_builder.CreateGEP(_srcPtr, _srcIdx, "src_idx");
 

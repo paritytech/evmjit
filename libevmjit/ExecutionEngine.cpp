@@ -36,10 +36,10 @@ namespace jit
 ReturnCode ExecutionEngine::run(bytes const& _code, RuntimeData* _data, Env* _env)
 {
 	std::string key{reinterpret_cast<char const*>(_code.data()), _code.size()};
-	if (auto cachedExec = Cache::findExec(key))
+	/*if (auto cachedExec = Cache::findExec(key))
 	{
 		return run(*cachedExec, _data, _env);
-	}
+	}*/
 
 	auto module = Compiler({}).compile(_code);
 	return run(std::move(module), _data, _env, _code);
@@ -53,50 +53,40 @@ ReturnCode ExecutionEngine::run(std::unique_ptr<llvm::Module> _module, RuntimeDa
 	static const auto program = "EVM JIT";
 	llvm::PrettyStackTraceProgram X(1, &program);
 
-	auto&& context = llvm::getGlobalContext();
-
 	llvm::InitializeNativeTarget();
 	llvm::InitializeNativeTargetAsmPrinter();
 	llvm::InitializeNativeTargetAsmParser();
 
-	std::string errorMsg;
 	llvm::EngineBuilder builder(module);
-	//builder.setMArch(MArch);
-	//builder.setMCPU(MCPU);
-	//builder.setMAttrs(MAttrs);
-	//builder.setRelocationModel(RelocModel);
-	//builder.setCodeModel(CMModel);
-	builder.setErrorStr(&errorMsg);
 	builder.setEngineKind(llvm::EngineKind::JIT);
 	builder.setUseMCJIT(true);
-	builder.setMCJITMemoryManager(new llvm::SectionMemoryManager());
+	std::unique_ptr<llvm::SectionMemoryManager> memoryManager(new llvm::SectionMemoryManager);
+	builder.setMCJITMemoryManager(memoryManager.get());
 	builder.setOptLevel(llvm::CodeGenOpt::None);
 
 	auto triple = llvm::Triple(llvm::sys::getProcessTriple());
 	if (triple.getOS() == llvm::Triple::OSType::Win32)
-		triple.setObjectFormat(llvm::Triple::ObjectFormatType::ELF);    // MCJIT does not support COFF format
+		triple.setObjectFormat(llvm::Triple::ObjectFormatType::ELF);  // MCJIT does not support COFF format
 	module->setTargetTriple(triple.str());
 
 	ExecBundle exec;
 	exec.engine.reset(builder.create());
 	if (!exec.engine)
 		return ReturnCode::LLVMConfigError;
-	_module.release();  // Successfully created llvm::ExecutionEngine takes ownership of the module
+	_module.release();        // Successfully created llvm::ExecutionEngine takes ownership of the module
+	memoryManager.release();  // and memory manager
 
-	auto finalizationStartTime = std::chrono::high_resolution_clock::now();
-	exec.engine->finalizeObject();
-	auto finalizationEndTime = std::chrono::high_resolution_clock::now();
-	clog(JIT) << " + " << std::chrono::duration_cast<std::chrono::milliseconds>(finalizationEndTime - finalizationStartTime).count();
+	// TODO: Finalization not needed when llvm::ExecutionEngine::getFunctionAddress used
+	//auto finalizationStartTime = std::chrono::high_resolution_clock::now();
+	//exec.engine->finalizeObject();
+	//auto finalizationEndTime = std::chrono::high_resolution_clock::now();
+	//clog(JIT) << " + " << std::chrono::duration_cast<std::chrono::milliseconds>(finalizationEndTime - finalizationStartTime).count();
 
 	auto executionStartTime = std::chrono::high_resolution_clock::now();
 
-	exec.entryFunc = module->getFunction("main");
-	if (!exec.entryFunc)
-		return ReturnCode::LLVMLinkError;
-
 	std::string key{reinterpret_cast<char const*>(_code.data()), _code.size()};
-	auto& cachedExec = Cache::registerExec(key, std::move(exec));
-	auto returnCode = run(cachedExec, _data, _env);
+	//auto& cachedExec = Cache::registerExec(key, std::move(exec));
+	auto returnCode = run(exec, _data, _env);
 
 	auto executionEndTime = std::chrono::high_resolution_clock::now();
 	clog(JIT) << " + " << std::chrono::duration_cast<std::chrono::milliseconds>(executionEndTime - executionStartTime).count() << " ms ";
@@ -107,33 +97,38 @@ ReturnCode ExecutionEngine::run(std::unique_ptr<llvm::Module> _module, RuntimeDa
 	return returnCode;
 }
 
+namespace
+{
+ReturnCode runEntryFunc(ExecBundle const& _exec, Runtime* _runtime)
+{
+	// That function uses long jumps to handle "execeptions".
+	// Do not create any non-POD objects here
+
+	// TODO:
+	// Getting pointer to function seems to be cachable,
+	// but it looks like getPointerToFunction() method does something special
+	// to allow function to be executed.
+	// That might be related to memory manager. Can we share one?
+	typedef ReturnCode(*EntryFuncPtr)(Runtime*);
+	auto entryFuncPtr = (EntryFuncPtr)_exec.engine->getFunctionAddress("main");
+
+	ReturnCode returnCode{};
+	auto sj = setjmp(_runtime->getJmpBuf());
+	if (sj == 0)
+		returnCode = entryFuncPtr(_runtime);
+	else
+		returnCode = static_cast<ReturnCode>(sj);
+
+	return returnCode;
+}
+}
+
 ReturnCode ExecutionEngine::run(ExecBundle const& _exec, RuntimeData* _data, Env* _env)
 {
-	ReturnCode returnCode;
-	std::jmp_buf buf;
-	Runtime runtime(_data, _env, buf);
-	auto r = setjmp(buf);
-	if (r == 0)
-	{
-		auto result = _exec.engine->runFunction(_exec.entryFunc, {{}, llvm::GenericValue(&runtime)});
-		returnCode = static_cast<ReturnCode>(result.IntVal.getZExtValue());
-	}
-	else
-		returnCode = static_cast<ReturnCode>(r);
-
+	Runtime runtime(_data, _env);
+	auto returnCode = runEntryFunc(_exec, &runtime);
 	if (returnCode == ReturnCode::Return)
-	{
-		returnData = runtime.getReturnData();
-
-		auto&& log = clog(JIT);
-		log << "RETURN [ ";
-		for (auto it = returnData.begin(), end = returnData.end(); it != end; ++it)
-			log << std::hex << std::setw(2) << std::setfill('0') << (int)*it << " ";
-		log << "]";
-	}
-	else
-		clog(JIT) << "RETURN " << (int)returnCode;
-
+		this->returnData = runtime.getReturnData();
 	return returnCode;
 }
 

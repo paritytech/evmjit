@@ -20,11 +20,20 @@ public:
 	/// Count step cost of instruction
 	void count(Instruction _inst);
 
+	/// Count additional cost
+	void count(llvm::Value* _cost);
+
 	/// Calculate & count gas cost for SSTORE instruction
 	void countSStore(class Ext& _ext, llvm::Value* _index, llvm::Value* _newValue);
 
+	/// Calculate & count additional gas cost for EXP instruction
+	void countExp(llvm::Value* _exponent);
+
 	/// Count gas cost of LOG data
 	void countLogData(llvm::Value* _dataLength);
+
+	/// Count gas cost of SHA3 data
+	void countSha3Data(llvm::Value* _dataLength);
 
 	/// Finalize cost-block by checking gas needed for the block before the block
 	/// @param _additionalCost adds additional cost to cost-block before commit
@@ -34,7 +43,10 @@ public:
 	void giveBack(llvm::Value* _gas);
 
 	/// Generate code that checks the cost of additional memory used by program
-	void checkMemory(llvm::Value* _additionalMemoryInWords);
+	void countMemory(llvm::Value* _additionalMemoryInWords);
+
+	/// Count addional gas cost for memory copy
+	void countCopy(llvm::Value* _copyWords);
 
 private:
 	/// Cumulative gas cost of a block of instructions

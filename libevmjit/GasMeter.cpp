@@ -21,12 +21,14 @@ namespace // Helper functions
 
 uint64_t const c_stepGas = 1;
 uint64_t const c_balanceGas = 20;
-uint64_t const c_sha3Gas = 20;
+uint64_t const c_sha3Gas = 10;
+uint64_t const c_sha3WordGas = 10;
 uint64_t const c_sloadGas = 20;
 uint64_t const c_sstoreSetGas = 300;
 uint64_t const c_sstoreResetGas = 100;
 uint64_t const c_sstoreRefundGas = 100;
 uint64_t const c_createGas = 100;
+uint64_t const c_createDataGas = 5;
 uint64_t const c_callGas = 20;
 uint64_t const c_expGas = 1;
 uint64_t const c_expByteGas = 1;
@@ -43,10 +45,15 @@ uint64_t getStepCost(Instruction inst) // TODO: Add this function to FeeSructure
 {
 	switch (inst)
 	{
+	default: // Assumes instruction code is valid
+		return c_stepGas;
+
 	case Instruction::STOP:
 	case Instruction::SUICIDE:
 	case Instruction::SSTORE: // Handle cost of SSTORE separately in GasMeter::countSStore()
 		return 0;
+
+	case Instruction::EXP:		return c_expGas;
 
 	case Instruction::SLOAD:	return c_sloadGas;
 
@@ -68,9 +75,6 @@ uint64_t getStepCost(Instruction inst) // TODO: Add this function to FeeSructure
 		auto numTopics = static_cast<uint64_t>(inst) - static_cast<uint64_t>(Instruction::LOG0);
 		return c_logGas + numTopics * c_logTopicGas;
 	}
-
-	default: // Assumes instruction code is valid
-		return 1;
 	}
 }
 
@@ -79,7 +83,7 @@ bool isCostBlockEnd(Instruction _inst)
 	// Basic block terminators like STOP are not needed on the list
 	// as cost will be commited at the end of basic block
 
-	// CALL & CALLCODE are commited manually
+	// CALL, CALLCODE & CREATE are commited manually
 
 	switch (_inst)
 	{
@@ -90,7 +94,6 @@ bool isCostBlockEnd(Instruction _inst)
 	case Instruction::MSTORE8:
 	case Instruction::SSTORE:
 	case Instruction::GAS:
-	case Instruction::CREATE:
 		return true;
 
 	default:
@@ -144,6 +147,26 @@ void GasMeter::count(Instruction _inst)
 		commitCostBlock();
 }
 
+void GasMeter::count(llvm::Value* _cost)
+{
+	createCall(m_gasCheckFunc, _cost);
+}
+
+void GasMeter::countExp(llvm::Value* _exponent)
+{
+	// Additional cost is 1 per significant byte of exponent
+	// lz - leading zeros
+	// cost = ((256 - lz) + 7) / 8
+
+	// OPT: All calculations can be done on 32/64 bits
+
+	auto ctlz = llvm::Intrinsic::getDeclaration(getModule(), llvm::Intrinsic::ctlz, Type::Word);
+	auto lz = m_builder.CreateCall2(ctlz, _exponent, m_builder.getInt1(false));
+	auto sigBits = m_builder.CreateSub(Constant::get(256), lz);
+	auto sigBytes = m_builder.CreateUDiv(m_builder.CreateAdd(sigBits, Constant::get(7)), Constant::get(8));
+	count(sigBytes);
+}
+
 void GasMeter::countSStore(Ext& _ext, llvm::Value* _index, llvm::Value* _newValue)
 {
 	assert(!m_checkCall); // Everything should've been commited before
@@ -157,15 +180,28 @@ void GasMeter::countSStore(Ext& _ext, llvm::Value* _index, llvm::Value* _newValu
 	auto isDelete = m_builder.CreateAnd(oldValueIsntZero, newValueIsZero, "isDelete");
 	auto cost = m_builder.CreateSelect(isInsert, Constant::get(c_sstoreSetGas), Constant::get(c_sstoreResetGas), "cost");
 	cost = m_builder.CreateSelect(isDelete, Constant::get(0), cost, "cost");
-	createCall(m_gasCheckFunc, cost);
+	count(cost);
 }
 
 void GasMeter::countLogData(llvm::Value* _dataLength)
 {
 	assert(m_checkCall);
 	assert(m_blockCost > 0); // LOGn instruction is already counted
-	auto cost = m_builder.CreateMul(_dataLength, Constant::get(c_logDataGas), "logdata_cost");
-	commitCostBlock(cost);
+	static_assert(c_logDataGas == 1, "Log data gas cost has changed. Update GasMeter.");
+	commitCostBlock(_dataLength);	// TODO: commit is not necessary 
+}
+
+void GasMeter::countSha3Data(llvm::Value* _dataLength)
+{
+	assert(m_checkCall);
+	assert(m_blockCost > 0); // SHA3 instruction is already counted
+
+	// TODO: This round ups to 32 happens in many places
+	// FIXME: Overflow possible but Memory::require() also called. Probably 64-bit arith can be used.
+	static_assert(c_sha3WordGas != 1, "SHA3 data cost has changed. Update GasMeter");
+	auto words = m_builder.CreateUDiv(m_builder.CreateAdd(_dataLength, Constant::get(31)), Constant::get(32));
+	auto cost = m_builder.CreateNUWMul(Constant::get(c_sha3WordGas), words);
+	count(cost);
 }
 
 void GasMeter::giveBack(llvm::Value* _gas)
@@ -192,17 +228,21 @@ void GasMeter::commitCostBlock(llvm::Value* _additionalCost)
 		m_blockCost = 0;
 
 		if (_additionalCost)
-		{
-			m_builder.CreateCall(m_gasCheckFunc, _additionalCost);
-		}
+			count(_additionalCost);
 	}
 	assert(m_blockCost == 0);
 }
 
-void GasMeter::checkMemory(llvm::Value* _additionalMemoryInWords)
+void GasMeter::countMemory(llvm::Value* _additionalMemoryInWords)
 {
-	auto cost = m_builder.CreateNUWMul(_additionalMemoryInWords, Constant::get(static_cast<uint64_t>(c_memoryGas)), "memcost");
-	m_builder.CreateCall(m_gasCheckFunc, cost);
+	static_assert(c_memoryGas == 1, "Memory gas cost has changed. Update GasMeter.");
+	count(_additionalMemoryInWords);
+}
+
+void GasMeter::countCopy(llvm::Value* _copyWords)
+{
+	static_assert(c_copyGas == 1, "Copy gas cost has changed. Update GasMeter.");
+	count(_copyWords);
 }
 
 }

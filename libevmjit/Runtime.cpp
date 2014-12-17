@@ -5,20 +5,35 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IntrinsicInst.h>
 
-//#include <libevm/VM.h>
-
 namespace dev
 {
 namespace eth
 {
 namespace jit
 {
+namespace
+{
+	jmp_buf_ref g_currJmpBuf;
+}
 
-Runtime::Runtime(RuntimeData* _data, Env* _env, JmpBufRef _jmpBuf):
+jmp_buf_ref Runtime::getCurrJmpBuf()
+{
+	return g_currJmpBuf;
+}
+
+Runtime::Runtime(RuntimeData* _data, Env* _env):
 	m_data(*_data),
 	m_env(*_env),
-	m_jmpBuf(_jmpBuf)
-{}
+	m_currJmpBuf(m_jmpBuf),
+	m_prevJmpBuf(g_currJmpBuf)
+{
+	g_currJmpBuf = m_jmpBuf;
+}
+
+Runtime::~Runtime()
+{
+	g_currJmpBuf = m_prevJmpBuf;
+}
 
 u256 Runtime::getGas() const
 {
