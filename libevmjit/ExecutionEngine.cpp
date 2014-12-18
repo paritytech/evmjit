@@ -42,22 +42,20 @@ ReturnCode ExecutionEngine::run(bytes const& _code, RuntimeData* _data, Env* _en
 	}*/
 
 	auto module = Compiler({}).compile(_code);
+	//module->dump();
 	return run(std::move(module), _data, _env, _code);
 }
 
 ReturnCode ExecutionEngine::run(std::unique_ptr<llvm::Module> _module, RuntimeData* _data, Env* _env, bytes const& _code)
 {
-	auto module = _module.get(); // Keep ownership of the module in _module
-
 	llvm::sys::PrintStackTraceOnErrorSignal();
 	static const auto program = "EVM JIT";
 	llvm::PrettyStackTraceProgram X(1, &program);
 
 	llvm::InitializeNativeTarget();
 	llvm::InitializeNativeTargetAsmPrinter();
-	llvm::InitializeNativeTargetAsmParser();
 
-	llvm::EngineBuilder builder(module);
+	llvm::EngineBuilder builder(_module.get());
 	builder.setEngineKind(llvm::EngineKind::JIT);
 	builder.setUseMCJIT(true);
 	std::unique_ptr<llvm::SectionMemoryManager> memoryManager(new llvm::SectionMemoryManager);
@@ -67,7 +65,7 @@ ReturnCode ExecutionEngine::run(std::unique_ptr<llvm::Module> _module, RuntimeDa
 	auto triple = llvm::Triple(llvm::sys::getProcessTriple());
 	if (triple.getOS() == llvm::Triple::OSType::Win32)
 		triple.setObjectFormat(llvm::Triple::ObjectFormatType::ELF);  // MCJIT does not support COFF format
-	module->setTargetTriple(triple.str());
+	_module->setTargetTriple(triple.str());
 
 	ExecBundle exec;
 	exec.engine.reset(builder.create());
@@ -75,6 +73,8 @@ ReturnCode ExecutionEngine::run(std::unique_ptr<llvm::Module> _module, RuntimeDa
 		return ReturnCode::LLVMConfigError;
 	_module.release();        // Successfully created llvm::ExecutionEngine takes ownership of the module
 	memoryManager.release();  // and memory manager
+
+	exec.engine->setObjectCache(Cache::getObjectCache());
 
 	// TODO: Finalization not needed when llvm::ExecutionEngine::getFunctionAddress used
 	//auto finalizationStartTime = std::chrono::high_resolution_clock::now();
