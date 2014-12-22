@@ -71,7 +71,7 @@ void Compiler::createBasicBlocks(bytes const& _bytecode)
 			if (nextInst == Instruction::JUMP || nextInst == Instruction::JUMPI)
 			{
 				// Create a block for the JUMP target.
-				ProgramCounter targetPC = val < _bytecode.size() ? val.convert_to<ProgramCounter>() : _bytecode.size();
+				ProgramCounter targetPC = val.ult(_bytecode.size()) ? val.getZExtValue() : _bytecode.size();
 				splitPoints.insert(targetPC);
 
 				ProgramCounter jumpPC = (next - _bytecode.begin());
@@ -488,7 +488,7 @@ void Compiler::compileBasicBlock(BasicBlock& _basicBlock, bytes const& _bytecode
 			// test for word >> (k * 8 + 7)
 			auto bitpos = m_builder.CreateAdd(k32x8, Constant::get(7), "bitpos");
 			auto bitval = m_builder.CreateLShr(word, bitpos, "bitval");
-			auto bittest = m_builder.CreateTrunc(bitval, m_builder.getInt1Ty(), "bittest");
+			auto bittest = m_builder.CreateTrunc(bitval, Type::Bool, "bittest");
 
 			auto mask_ = m_builder.CreateShl(Constant::get(1), bitpos);
 			auto mask = m_builder.CreateSub(mask_, Constant::get(1), "mask");
