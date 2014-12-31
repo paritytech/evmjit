@@ -11,6 +11,8 @@
 
 #include <llvm/Bitcode/ReaderWriter.h>
 #include <llvm/Support/raw_os_ostream.h>
+#include <llvm/Support/Signals.h>
+#include <llvm/Support/PrettyStackTrace.h>
 
 #include <libdevcore/Common.h>
 #include <libdevcore/CommonIO.h>
@@ -85,6 +87,9 @@ void parseProgramOptions(int _argc, char** _argv, boost::program_options::variab
 
 int main(int argc, char** argv)
 {
+	llvm::sys::PrintStackTraceOnErrorSignal();
+	llvm::PrettyStackTraceProgram X(argc, argv);
+
 	boost::program_options::variables_map options;
 	parseProgramOptions(argc, argv, options);
 
@@ -127,7 +132,7 @@ int main(int argc, char** argv)
 		compilerOptions.rewriteSwitchToBranches = optimize || options.count("rewrite-switch") > 0;
 
 		auto compiler = eth::jit::Compiler(compilerOptions);
-		auto module = compiler.compile(bytecode);
+		auto module = compiler.compile(bytecode, "main");
 
 		auto compilationEndTime = std::chrono::high_resolution_clock::now();
 
@@ -196,7 +201,8 @@ int main(int argc, char** argv)
 			data.code = bytecode.data();
 
 			// BROKEN: env_* functions must be implemented & RuntimeData struct created
-			auto result = engine.run(std::move(module), &data, nullptr, bytecode);
+			// TODO: Do not compile module again
+			auto result = engine.run(bytecode, &data, nullptr);
 			return static_cast<int>(result);
 		}
 	}

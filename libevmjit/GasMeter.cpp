@@ -78,29 +78,6 @@ uint64_t getStepCost(Instruction inst) // TODO: Add this function to FeeSructure
 	}
 }
 
-bool isCostBlockEnd(Instruction _inst)
-{
-	// Basic block terminators like STOP are not needed on the list
-	// as cost will be commited at the end of basic block
-
-	// CALL, CALLCODE & CREATE are commited manually
-
-	switch (_inst)
-	{
-	case Instruction::CALLDATACOPY:
-	case Instruction::CODECOPY:
-	case Instruction::MLOAD:
-	case Instruction::MSTORE:
-	case Instruction::MSTORE8:
-	case Instruction::SSTORE:
-	case Instruction::GAS:
-		return true;
-
-	default:
-		return false;
-	}
-}
-
 }
 
 GasMeter::GasMeter(llvm::IRBuilder<>& _builder, RuntimeManager& _runtimeManager) :
@@ -109,7 +86,8 @@ GasMeter::GasMeter(llvm::IRBuilder<>& _builder, RuntimeManager& _runtimeManager)
 {
 	auto module = getModule();
 
-	m_gasCheckFunc = llvm::Function::Create(llvm::FunctionType::get(Type::Void, Type::Word, false), llvm::Function::PrivateLinkage, "gas.check", module);
+	llvm::Type* gasCheckArgs[] = {Type::RuntimePtr, Type::Word};
+	m_gasCheckFunc = llvm::Function::Create(llvm::FunctionType::get(Type::Void, gasCheckArgs, false), llvm::Function::PrivateLinkage, "gas.check", module);
 	InsertPointGuard guard(m_builder);
 
 	auto checkBB = llvm::BasicBlock::Create(_builder.getContext(), "Check", m_gasCheckFunc);
@@ -117,14 +95,17 @@ GasMeter::GasMeter(llvm::IRBuilder<>& _builder, RuntimeManager& _runtimeManager)
 	auto updateBB = llvm::BasicBlock::Create(_builder.getContext(), "Update", m_gasCheckFunc);
 
 	m_builder.SetInsertPoint(checkBB);
-	llvm::Value* cost = m_gasCheckFunc->arg_begin();
-	cost->setName("cost");
+	auto arg = m_gasCheckFunc->arg_begin();
+	arg->setName("rt");
+	++arg;
+	arg->setName("cost");
+	auto cost = arg;
 	auto gas = m_runtimeManager.getGas();
 	auto isOutOfGas = m_builder.CreateICmpUGT(cost, gas, "isOutOfGas");
 	m_builder.CreateCondBr(isOutOfGas, outOfGasBB, updateBB);
 
 	m_builder.SetInsertPoint(outOfGasBB);
-	_runtimeManager.raiseException(ReturnCode::OutOfGas);
+	m_runtimeManager.raiseException(ReturnCode::OutOfGas);
 	m_builder.CreateUnreachable();
 
 	m_builder.SetInsertPoint(updateBB);
@@ -138,18 +119,15 @@ void GasMeter::count(Instruction _inst)
 	if (!m_checkCall)
 	{
 		// Create gas check call with mocked block cost at begining of current cost-block
-		m_checkCall = m_builder.CreateCall(m_gasCheckFunc, llvm::UndefValue::get(Type::Word));
+		m_checkCall = createCall(m_gasCheckFunc, m_runtimeManager.getRuntimePtr(), llvm::UndefValue::get(Type::Word));
 	}
 
 	m_blockCost += getStepCost(_inst);
-
-	if (isCostBlockEnd(_inst))
-		commitCostBlock();
 }
 
 void GasMeter::count(llvm::Value* _cost)
 {
-	createCall(m_gasCheckFunc, _cost);
+	createCall(m_gasCheckFunc, m_runtimeManager.getRuntimePtr(), _cost);
 }
 
 void GasMeter::countExp(llvm::Value* _exponent)
@@ -169,8 +147,6 @@ void GasMeter::countExp(llvm::Value* _exponent)
 
 void GasMeter::countSStore(Ext& _ext, llvm::Value* _index, llvm::Value* _newValue)
 {
-	assert(!m_checkCall); // Everything should've been commited before
-
 	auto oldValue = _ext.sload(_index);
 	auto oldValueIsZero = m_builder.CreateICmpEQ(oldValue, Constant::get(0), "oldValueIsZero");
 	auto newValueIsZero = m_builder.CreateICmpEQ(_newValue, Constant::get(0), "newValueIsZero");
@@ -188,7 +164,7 @@ void GasMeter::countLogData(llvm::Value* _dataLength)
 	assert(m_checkCall);
 	assert(m_blockCost > 0); // LOGn instruction is already counted
 	static_assert(c_logDataGas == 1, "Log data gas cost has changed. Update GasMeter.");
-	commitCostBlock(_dataLength);	// TODO: commit is not necessary 
+	count(_dataLength);
 }
 
 void GasMeter::countSha3Data(llvm::Value* _dataLength)
@@ -209,10 +185,8 @@ void GasMeter::giveBack(llvm::Value* _gas)
 	m_runtimeManager.setGas(m_builder.CreateAdd(m_runtimeManager.getGas(), _gas));
 }
 
-void GasMeter::commitCostBlock(llvm::Value* _additionalCost)
+void GasMeter::commitCostBlock()
 {
-	assert(!_additionalCost || m_checkCall); // _additionalCost => m_checkCall; Must be inside cost-block
-
 	// If any uncommited block
 	if (m_checkCall)
 	{
@@ -223,12 +197,9 @@ void GasMeter::commitCostBlock(llvm::Value* _additionalCost)
 			return;
 		}
 
-		m_checkCall->setArgOperand(0, Constant::get(m_blockCost)); // Update block cost in gas check call
+		m_checkCall->setArgOperand(1, Constant::get(m_blockCost)); // Update block cost in gas check call
 		m_checkCall = nullptr; // End cost-block
 		m_blockCost = 0;
-
-		if (_additionalCost)
-			count(_additionalCost);
 	}
 	assert(m_blockCost == 0);
 }
