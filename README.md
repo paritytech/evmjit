@@ -24,7 +24,10 @@ It can be used to substitute classic interpreter-like EVM Virtual Machine in Eth
   2. unzip it
   3. `cd llvm-3.7.0.src`
   4. `mkdir build && cd $_`
-  5. `cmake -G "Unix Makefiles" .. -DCMAKE_C_FLAGS_RELEASE= -DCMAKE_CXX_FLAGS_RELEASE= -DCMAKE_INSTALL_PREFIX=/usr/local/Cellar/llvm/3.7 -DCMAKE_BUILD_TYPE=Release`
+  5. 
+    ```
+cmake -G "Unix Makefiles" .. -DCMAKE_C_FLAGS_RELEASE= -DCMAKE_CXX_FLAGS_RELEASE= -DCMAKE_INSTALL_PREFIX=/usr/local/Cellar/llvm/3.7 -DCMAKE_BUILD_TYPE=Release 
+    ```
   6. `make && make install`
 2. Build library with cmake
   1. `mkdir build && cd $_`
