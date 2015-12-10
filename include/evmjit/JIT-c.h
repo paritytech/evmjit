@@ -60,11 +60,12 @@ typedef enum evmjit_return_code
 
 typedef struct evmjit_context evmjit_context;
 
-EVMJIT_API evmjit_context* evmjit_create(evmjit_runtime_data* _data, void* _env);
+EVMJIT_API evmjit_runtime_data* evmjit_create_runtime_data();
+EVMJIT_API void evmjit_destroy_runtime_data(evmjit_runtime_data* _data);
 
+EVMJIT_API evmjit_context* evmjit_create_context(evmjit_runtime_data* _data, void* _env);
 EVMJIT_API evmjit_return_code evmjit_exec(evmjit_context* _context);
-
-EVMJIT_API void evmjit_destroy(evmjit_context* _context);
+EVMJIT_API void evmjit_destroy_context(evmjit_context* _context);
 
 
 inline char const* evmjit_get_output(evmjit_runtime_data* _data) { return _data->callData; }
