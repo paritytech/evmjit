@@ -110,6 +110,8 @@ JITImpl::JITImpl()
 	bool preloadCache = g_cache == CacheMode::preload;
 	if (preloadCache)
 		g_cache = CacheMode::on;
+	// turned off due to race conditions.
+	g_cache = CacheMode::off;
 
 	llvm::InitializeNativeTarget();
 	llvm::InitializeNativeTargetAsmPrinter();
