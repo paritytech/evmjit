@@ -6,12 +6,24 @@ extern "C"
 {
 using namespace dev::evmjit;
 
-evmjit_context* evmjit_create(evmjit_runtime_data* _data, void* _env)
+evmjit_runtime_data* evmjit_create_runtime_data()
+{
+	auto data = new(std::nothrow) RuntimeData();
+	return reinterpret_cast<evmjit_runtime_data*>(data);
+}	
+
+void evmjit_destroy_runtime_data(evmjit_runtime_data* _data)
+{
+	auto data = reinterpret_cast<RuntimeData*>(_data);
+	delete data;
+}
+
+evmjit_context* evmjit_create_context(evmjit_runtime_data* _data, void* _env)
 {
 	auto data = reinterpret_cast<RuntimeData*>(_data);
 	auto env  = reinterpret_cast<Env*>(_env);
 
-	assert(!data && "Pointer to runtime data must not be null");
+	assert(data && "Pointer to runtime data must not be null");
 	if (!data)
 		return nullptr;
 
@@ -20,7 +32,7 @@ evmjit_context* evmjit_create(evmjit_runtime_data* _data, void* _env)
 	return reinterpret_cast<evmjit_context*>(context);
 }
 
-void evmjit_destroy(evmjit_context* _context)
+void evmjit_destroy_context(evmjit_context* _context)
 {
 	auto context = reinterpret_cast<ExecutionContext*>(_context);
 	delete context;
@@ -31,7 +43,7 @@ evmjit_return_code evmjit_exec(evmjit_context* _context, void* _schedule)
 	auto context = reinterpret_cast<ExecutionContext*>(_context);
 	auto schedule = reinterpret_cast<JITSchedule*>(_schedule);
 
-	assert(!context && "Invalid context");
+	assert(context && "Invalid context");
 	if (!context)
 		return UnexpectedException;
 

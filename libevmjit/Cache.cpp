@@ -111,7 +111,7 @@ std::unique_ptr<llvm::Module> Cache::getObject(std::string const& id)
 	//	g_listener->stateChanged(ExecState::CacheLoad);
 
 	DLOG(cache) << id << ": search\n";
-	if (!CHECK(!g_lastObject))
+	if (!!g_lastObject)
 		g_lastObject = nullptr;
 
 	llvm::SmallString<256> cachePath{getVersionedCacheDir()};
