@@ -6,6 +6,19 @@ extern "C"
 {
 using namespace dev::evmjit;
 
+
+EVMJIT_API evmjit_schedule* evmjit_create_schedule()
+{
+	auto schedule = new(std::nothrow) JITSchedule();
+	return reinterpret_cast<evmjit_schedule*>(schedule);
+}
+
+EVMJIT_API void evmjit_destroy_schedule(evmjit_schedule* _schedule)
+{
+	auto schedule = reinterpret_cast<JITSchedule*>(_schedule);
+	delete schedule;
+}
+
 evmjit_runtime_data* evmjit_create_runtime_data()
 {
 	auto data = new(std::nothrow) RuntimeData();

@@ -59,7 +59,15 @@ typedef enum evmjit_return_code
 	UnexpectedException = -111
 } evmjit_return_code;
 
+typedef struct emvjit_schedule
+{
+	bool haveDelegateCall;
+} evmjit_schedule;
+
 typedef struct evmjit_context evmjit_context;
+
+EVMJIT_API evmjit_schedule* evmjit_create_schedule();
+EVMJIT_API void evmjit_destroy_schedule(evmjit_schedule* _schedule);
 
 EVMJIT_API evmjit_runtime_data* evmjit_create_runtime_data();
 EVMJIT_API void evmjit_destroy_runtime_data(evmjit_runtime_data* _data);
