@@ -6,6 +6,19 @@ extern "C"
 {
 using namespace dev::evmjit;
 
+
+EVMJIT_API evmjit_schedule* evmjit_create_schedule()
+{
+	auto schedule = new(std::nothrow) JITSchedule();
+	return reinterpret_cast<evmjit_schedule*>(schedule);
+}
+
+EVMJIT_API void evmjit_destroy_schedule(evmjit_schedule* _schedule)
+{
+	auto schedule = reinterpret_cast<JITSchedule*>(_schedule);
+	delete schedule;
+}
+
 evmjit_runtime_data* evmjit_create_runtime_data()
 {
 	auto data = new(std::nothrow) RuntimeData();
@@ -38,9 +51,10 @@ void evmjit_destroy_context(evmjit_context* _context)
 	delete context;
 }
 
-evmjit_return_code evmjit_exec(evmjit_context* _context)
+evmjit_return_code evmjit_exec(evmjit_context* _context, void* _schedule)
 {
 	auto context = reinterpret_cast<ExecutionContext*>(_context);
+	auto schedule = reinterpret_cast<JITSchedule*>(_schedule);
 
 	assert(context && "Invalid context");
 	if (!context)
@@ -48,7 +62,7 @@ evmjit_return_code evmjit_exec(evmjit_context* _context)
 
 	try
 	{
-		auto returnCode = JIT::exec(*context);
+		auto returnCode = JIT::exec(*context, *schedule);
 		return static_cast<evmjit_return_code>(returnCode);
 	}
 	catch(...)
